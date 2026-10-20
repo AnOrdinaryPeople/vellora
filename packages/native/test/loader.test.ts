@@ -73,3 +73,12 @@ test("optionalDependencies match the generated npm/* platform packages 1:1", () 
     if (name === null) expect(optionalKeys).not.toContain(`@vellora/native-${tag}`);
   }
 });
+
+test("every published prebuild is required by a string literal (bundler-resolvable)", () => {
+  const src = readFileSync(join(PKG_DIR, "src", "index.ts"), "utf8");
+  for (const name of Object.values(RESOLUTION_TABLE)) {
+    if (name !== null) expect(src).toContain(`require("${name}")`);
+  }
+  // A computed specifier (e.g. `require(pkg)`) is opaque to bundlers and file tracers.
+  expect(src).not.toMatch(/require\((?!["'`])(?!localPath\))/);
+});
