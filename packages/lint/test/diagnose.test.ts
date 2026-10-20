@@ -214,3 +214,40 @@ describe("Deterministic report ordering", () => {
     expect(lines).toEqual(sorted);
   });
 });
+
+describe("Undrawn @page margin boxes are reported", () => {
+  test("@bottom-right is a non-fixable error that maps to the core feature", () => {
+    const html =
+      '<!DOCTYPE html><html><head><style>@page { @bottom-right { content: "p " counter(page); } }</style></head><body><p>hi</p></body></html>';
+    const report = diagnose(html);
+    expect(report.conformant).toBe(false);
+    expect(report.findings).toHaveLength(1);
+    expect(report.findings[0]).toMatchObject({
+      rule: "page-margin-box",
+      severity: "error",
+      autoFixable: false,
+      snippet: "@bottom-right",
+      compatLink: COMPAT_LINKS["page-margin-box"],
+    });
+  });
+
+  test("@top-center, @bottom-center and a name inside a string stay conformant", () => {
+    const html =
+      '<!DOCTYPE html><html><head><style>@page { @top-center { content: "see @bottom-right"; } @bottom-center { content: counter(page); } }</style></head><body><p>hi</p></body></html>';
+    expect(diagnose(html).conformant).toBe(true);
+  });
+
+  test("an @ inside a url is not a margin box", () => {
+    const html =
+      "<!DOCTYPE html><html><head><style>.i { background: url(icons@bottom-right.png); }</style></head><body><p>hi</p></body></html>";
+    expect(diagnose(html).conformant).toBe(true);
+  });
+
+  test("fix leaves the margin box in place and keeps reporting it", () => {
+    const html =
+      '<!DOCTYPE html><html><head><style>@page { @left-middle { content: "x"; } }</style></head><body><p>hi</p></body></html>';
+    const result = fix(html);
+    expect(result.html).toContain("@left-middle");
+    expect(rulesOf(result.report.findings)).toContain("page-margin-box");
+  });
+});

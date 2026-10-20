@@ -825,3 +825,15 @@ fn empty_document_yields_one_blank_page() {
     let doc = lopdf::Document::load_mem(&bytes).unwrap();
     assert_eq!(doc.get_pages().len(), 1, "exactly one blank page");
 }
+
+#[test]
+fn render_rejects_an_undrawn_page_margin_box_instead_of_dropping_it() {
+    let html = br#"<!DOCTYPE html><html><head><style>
+        @page { @bottom-right { content: "page " counter(page); } }
+    </style></head><body><p>hi</p></body></html>"#;
+    let err = render(html, &opts()).expect_err("an undrawn footer must not vanish silently");
+    match err {
+        vellora_core::VelloraError::Unsupported(d) => assert_eq!(d.feature, "css:page-margin-box"),
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+}

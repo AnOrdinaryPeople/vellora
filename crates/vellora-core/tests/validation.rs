@@ -506,3 +506,75 @@ fn unbalanced_decoy_at_page_does_not_discard_a_later_valid_rule() {
     let pb = page_css::parse_page_box(html);
     assert_eq!(pb.width, 400.0);
 }
+
+#[test]
+fn undrawn_page_margin_box_is_rejected_at_its_source_position() {
+    let html = "<!DOCTYPE html><html><head><style>\n@page {\n  @bottom-right { content: \"page \" counter(page); }\n}\n</style></head><body><p>hi</p></body></html>";
+
+    let err = validate(html).expect_err("@bottom-right is not drawn, so strict must reject it");
+    match err {
+        VelloraError::Unsupported(d) => {
+            assert_eq!(d.feature, "css:page-margin-box");
+            assert_eq!(d.line, Some(3), "points at the @bottom-right rule");
+            assert_eq!(d.col, Some(3));
+        }
+        other => panic!("expected Unsupported, got {other:?}"),
+    }
+}
+
+#[test]
+fn every_undrawn_page_margin_box_is_rejected() {
+    for name in [
+        "top-left-corner",
+        "top-left",
+        "top-right",
+        "top-right-corner",
+        "bottom-left-corner",
+        "bottom-left",
+        "bottom-right",
+        "bottom-right-corner",
+        "left-top",
+        "left-middle",
+        "left-bottom",
+        "right-top",
+        "right-middle",
+        "right-bottom",
+    ] {
+        let html = format!(
+            "<!DOCTYPE html><html><head><style>@page {{ @{name} {{ content: \"x\"; }} }}</style></head><body><p>hi</p></body></html>"
+        );
+        match validate(&html) {
+            Err(VelloraError::Unsupported(d)) => {
+                assert_eq!(d.feature, "css:page-margin-box", "@{name}")
+            }
+            other => panic!("@{name} must be rejected, got {other:?}"),
+        }
+    }
+}
+
+#[test]
+fn drawn_page_margin_boxes_pass_the_gate() {
+    let html = r#"<!DOCTYPE html><html><head><style>
+        @page {
+          @top-center { content: "Header"; }
+          @bottom-center { content: "Page " counter(page) " of " counter(pages); }
+        }
+    </style></head><body><p>hi</p></body></html>"#;
+    validate(html).expect("@top-center and @bottom-center are drawn and stay in the subset");
+}
+
+#[test]
+fn margin_box_name_inside_a_css_string_passes_the_gate() {
+    let html = r#"<!DOCTYPE html><html><head><style>
+        @page { @bottom-center { content: "see @bottom-right"; } }
+    </style></head><body><p>hi</p></body></html>"#;
+    validate(html).expect("a margin-box name inside a string value is not a rule");
+}
+
+#[test]
+fn margin_box_name_inside_a_url_passes_the_gate() {
+    let html = r#"<!DOCTYPE html><html><head><style>
+        .icon { background: url(icons@bottom-right.png); }
+    </style></head><body><p style="background:url(a@top-left.png)">hi</p></body></html>"#;
+    validate(html).expect("an @ inside a url is not a margin-box at-rule");
+}
