@@ -14,6 +14,7 @@ export const COMPAT_LINKS: Record<RuleId, string> = {
   "invalid-markup": `${COMPAT_BASE}#invalid-markup`,
   "script-element": `${COMPAT_BASE}#script-element`,
   "css-animation": `${COMPAT_BASE}#css-animation`,
+  "page-margin-box": `${COMPAT_BASE}#page-margin-box`,
 };
 
 export function compatLink(rule: RuleId): string {

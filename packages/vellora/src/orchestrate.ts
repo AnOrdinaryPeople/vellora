@@ -36,6 +36,7 @@ const RULE_ID_TO_CORE_FEATURE: Record<RuleId, string> = {
   "script-element": "element:script",
   "inline-svg": "element:svg",
   "css-animation": "css:animation",
+  "page-margin-box": "css:page-margin-box",
   "flex-grid-in-td": "css:grid",
   "img-dimension-attrs": "css:img-dimensions",
   "invalid-markup": "html:invalid-markup",
