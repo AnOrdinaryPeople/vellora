@@ -26,8 +26,8 @@ export const SUPPORTED_PLATFORMS = [
 
 /**
  * Host-tag → prebuild package map. Pre-enumerates the full intended matrix so adding a target later
- * is purely additive (publish the package, flip its value from `null`): no loader-shape or consumer
- * change. Published in the launch matrix: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
+ * is purely additive (publish the package, flip its value from `null`, add its literal `require` in
+ * `requirePrebuild`): no loader-shape or consumer change. Published in the launch matrix: `darwin-arm64`, `darwin-x64`, `linux-x64-gnu`,
  * `linux-arm64-gnu`. Reserved (no published package yet): `linux-x64-musl`, `linux-arm64-musl`.
  */
 export const RESOLUTION_TABLE: Readonly<Record<string, string | null>> = {
@@ -105,6 +105,26 @@ To build locally, install the Rust toolchain and run \`npm run build\` at the re
   );
 }
 
+/**
+ * Require the published prebuild package for `tag`. Each specifier is a string literal (never
+ * computed from `RESOLUTION_TABLE`) so bundlers and file tracers can resolve the `.node` statically.
+ * Every non-null `RESOLUTION_TABLE` entry must have a matching case here.
+ */
+function requirePrebuild(tag: string): VelloraAddon | undefined {
+  switch (tag) {
+    case "darwin-arm64":
+      return require("@vellora/native-darwin-arm64") as VelloraAddon;
+    case "darwin-x64":
+      return require("@vellora/native-darwin-x64") as VelloraAddon;
+    case "linux-x64-gnu":
+      return require("@vellora/native-linux-x64-gnu") as VelloraAddon;
+    case "linux-arm64-gnu":
+      return require("@vellora/native-linux-arm64-gnu") as VelloraAddon;
+    default:
+      return undefined;
+  }
+}
+
 function loadAddon(): VelloraAddon {
   const tag = platformTag();
   // 1) Dev: a locally built `.node` next to the package takes precedence.
@@ -112,15 +132,13 @@ function loadAddon(): VelloraAddon {
   if (existsSync(localPath)) {
     return require(localPath) as VelloraAddon;
   }
-  // 2) Published: resolve the matching prebuild package via the resolution table. Only the
-  // host-matching entry is required; a missing sibling optional package must not break the load.
-  const pkg = RESOLUTION_TABLE[tag];
-  if (pkg) {
-    try {
-      return require(pkg) as VelloraAddon;
-    } catch {
-      // The optional prebuild package is absent on this host; fall through to the actionable error.
-    }
+  // 2) Published: require the matching prebuild package. Only the host-matching entry is
+  // required; a missing sibling optional package must not break the load.
+  try {
+    const prebuild = requirePrebuild(tag);
+    if (prebuild) return prebuild;
+  } catch {
+    // The optional prebuild package is absent on this host; fall through to the actionable error.
   }
   throw unsupportedPlatformError(process.platform, process.arch, tag);
 }
