@@ -12,6 +12,8 @@ orchestration, with optional Chromium fidelity routing for selected templates.
 npm install vellora
 ```
 
+ESM package; CommonJS `require("vellora")` works on Node 20.19+ / 22.12+.
+
 ## Usage
 
 ```ts
