@@ -9,6 +9,7 @@ import { flexGridInTdRule } from "./flex-grid-in-td.js";
 import { imgDimensionAttrsRule } from "./img-dimension-attrs.js";
 import { inlineSvgRule } from "./inline-svg.js";
 import { invalidMarkupRule } from "./invalid-markup.js";
+import { pageMarginBoxRule } from "./page-margin-box.js";
 import { scriptElementRule } from "./script-element.js";
 
 export const RULES: Rule[] = [
@@ -18,4 +19,5 @@ export const RULES: Rule[] = [
   invalidMarkupRule,
   scriptElementRule,
   cssAnimationRule,
+  pageMarginBoxRule,
 ];

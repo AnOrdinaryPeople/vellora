@@ -54,6 +54,7 @@ const deniedProps = extractPairArray(src, "DENIED_CSS_PROPERTIES");
 // Tokens contain whitespace variants (e.g. "display:grid"/"display: grid") that
 // map to the same feature; dedupe by feature for the table.
 const deniedTokensRaw = extractPairArray(src, "DENIED_CSS_TOKENS");
+const deniedMarginBoxes = extractPairArray(src, "DENIED_PAGE_MARGIN_BOXES");
 const maxNesting = extractConstUsize(src, "MAX_NESTING_DEPTH");
 
 // Only features with a real `@vellora/lint.fix()` rule are Dev-time-fixable;
@@ -126,6 +127,12 @@ for (const [token, feature] of deniedTokensRaw) {
   tokenRows.push({ feature: `\`${token}\` (${feature})`, status, note });
 }
 
+const marginBoxRows = deniedMarginBoxes.map(([name, feature]) => ({
+  feature: `\`${name}\` (${feature})`,
+  status: statusFor(feature),
+  note: "Rejected by the strict gate. Not drawn by the native renderer.",
+}));
+
 // Curated allowed/best-effort and dev-time-fixable entries that are NOT on a
 // denylist (so the gate accepts them) but matter to authors. These describe
 // renderer behaviour for in-subset features.
@@ -158,7 +165,7 @@ const allowedRows = [
   {
     feature: "`@page` margins, page numbers, running header/footer",
     status: "Supported",
-    note: "Paged-media constructs are honoured.",
+    note: "Page size and margins are honoured; running content is drawn in the `@top-center` and `@bottom-center` margin boxes, with `counter(page)` / `counter(pages)`. The other margin boxes are rejected (see below).",
   },
   {
     feature: "Fonts: text shaping + subset embedding",
@@ -249,6 +256,15 @@ ${table(propRows)}
 These tokens are in \`DENIED_CSS_TOKENS\` and are rejected by the strict gate.
 
 ${table(tokenRows)}
+
+## Unsupported \`@page\` margin boxes
+
+These margin boxes are in \`DENIED_PAGE_MARGIN_BOXES\` and are rejected by the
+strict gate as \`css:page-margin-box\`. The native renderer draws only
+\`@top-center\` and \`@bottom-center\`; use one of those, or route the template to
+\`engine: "chromium"\`.
+
+${table(marginBoxRows)}
 
 ## Nesting depth limit
 

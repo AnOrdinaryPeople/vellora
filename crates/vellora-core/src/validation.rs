@@ -118,6 +118,28 @@ const DENIED_CSS_TOKENS: &[(&str, &str)] = &[
     ("display: grid", "css:grid"),
 ];
 
+/// `@page` margin boxes (CSS Paged Media 3, §4.2) the renderer does NOT draw. Only
+/// `@top-center` and `@bottom-center` are placed (`page_css::MarginBox`); the other fourteen used to
+/// be parsed and silently dropped, so a footer authored in `@bottom-right` vanished from the PDF
+/// with no diagnostic. Matched as at-rule names inside CSS regions; a longer name that starts with a
+/// shorter one (`@bottom-left-corner` / `@bottom-left`) is the same violation at the same offset.
+const DENIED_PAGE_MARGIN_BOXES: &[(&str, &str)] = &[
+    ("@top-left-corner", "css:page-margin-box"),
+    ("@top-left", "css:page-margin-box"),
+    ("@top-right-corner", "css:page-margin-box"),
+    ("@top-right", "css:page-margin-box"),
+    ("@bottom-left-corner", "css:page-margin-box"),
+    ("@bottom-left", "css:page-margin-box"),
+    ("@bottom-right-corner", "css:page-margin-box"),
+    ("@bottom-right", "css:page-margin-box"),
+    ("@left-top", "css:page-margin-box"),
+    ("@left-middle", "css:page-margin-box"),
+    ("@left-bottom", "css:page-margin-box"),
+    ("@right-top", "css:page-margin-box"),
+    ("@right-middle", "css:page-margin-box"),
+    ("@right-bottom", "css:page-margin-box"),
+];
+
 /// The HTML element denylist (subset complement). Exposed so the render path can
 /// validate against the SAME parse it uses for layout (cost model).
 pub fn denied_elements() -> &'static [&'static str] {
@@ -278,6 +300,26 @@ fn scan_css(html: &str) -> Option<Diagnostic> {
         for (token, feature) in DENIED_CSS_TOKENS {
             if let Some(idx) = lower.find(token) {
                 consider(&mut best, region.offset + idx, feature);
+            }
+        }
+
+        // Margin-box at-rules, only where an at-rule can start (region start,
+        // after `{`, `}`, `;` or whitespace): `url(icons@bottom-right.png)` is not
+        // a margin box.
+        for (token, feature) in DENIED_PAGE_MARGIN_BOXES {
+            let mut start = 0;
+            while let Some(rel) = lower[start..].find(token) {
+                let idx = start + rel;
+                let at_rule_start = idx == 0
+                    || matches!(
+                        bytes[idx - 1],
+                        b'{' | b'}' | b';' | b' ' | b'\t' | b'\n' | b'\r'
+                    );
+                if at_rule_start {
+                    consider(&mut best, region.offset + idx, feature);
+                    break;
+                }
+                start = idx + token.len();
             }
         }
 

@@ -11,7 +11,8 @@ export type RuleId =
   | "img-dimension-attrs"
   | "invalid-markup"
   | "script-element"
-  | "css-animation";
+  | "css-animation"
+  | "page-margin-box";
 
 export type Severity = "error" | "warning";
 
