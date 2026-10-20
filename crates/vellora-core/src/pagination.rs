@@ -7,7 +7,7 @@
 //! `counter(page)`/`counter(pages)` for the running footer. Coordinates emitted
 //! into the display list are PAGE-LOCAL.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::blitz_engine::{ImageRun, LaidOutBox, LaidOutDoc};
 use crate::page_css::{resolve_content, MarginBox, PageBox};
@@ -51,6 +51,13 @@ struct Fragment {
     table_id: Option<usize>,
     /// If this fragment is a `<thead>`, its boxes get repeated for that table.
     is_thead: bool,
+    /// A forced page break (`break-before: page`) precedes this fragment.
+    break_before: bool,
+    /// For a `break-inside: avoid` group (a `<tbody>`, an items table, or a
+    /// wrapper that would otherwise be flattened): the fragments it would have
+    /// been split into. Kept so a group taller than an empty page falls back to
+    /// them — `avoid` is a preference, never a reason to overflow the page.
+    members: Vec<Fragment>,
 }
 
 struct TableHeader {
@@ -101,7 +108,8 @@ pub fn paginate(doc: &LaidOutDoc, page_box: &PageBox) -> Paginated {
         *cursor += header.height;
     };
 
-    for frag in &fragments {
+    let mut queue: VecDeque<Fragment> = fragments.into();
+    while let Some(frag) = queue.pop_front() {
         if frag.is_thead {
             // The header is emitted inline as part of its table's first page and
             // re-injected on continuations; skip standalone placement here.
@@ -129,6 +137,39 @@ pub fn paginate(doc: &LaidOutDoc, page_box: &PageBox) -> Paginated {
         } else {
             0.0
         };
+
+        // A keep-together group that cannot fit even on an empty page is split
+        // back into its parts (the forced break, if any, moves to the first).
+        // A forced break inside the group also splits it: a forced break wins
+        // over `avoid` (CSS Fragmentation 3, §4.4).
+        let group_header_h = table_header.map(|header| header.height).unwrap_or(0.0);
+        let forced_break_inside = frag.members.iter().skip(1).any(has_forced_break);
+        if !frag.members.is_empty()
+            && (frag_height + group_header_h > fit_limit || forced_break_inside)
+        {
+            let break_before = frag.break_before;
+            let mut members = frag.members;
+            if let Some(first) = members.first_mut() {
+                first.break_before |= break_before;
+            }
+            for member in members.into_iter().rev() {
+                queue.push_front(member);
+            }
+            continue;
+        }
+
+        // A forced break starts this fragment on a fresh page.
+        if frag.break_before && !current.is_empty() {
+            push_page(
+                &mut current,
+                &mut page_slices,
+                &mut thead_repeated,
+                !headers_on_current.is_empty(),
+            );
+            cursor = 0.0;
+            headers_on_current.clear();
+        }
+
         let mut page_gap = if current.is_empty() { 0.0 } else { pending_gap };
         if page_gap > 0.0
             && cursor + frag_height + lead_h + page_gap > fit_limit
@@ -275,22 +316,32 @@ pub fn paginate(doc: &LaidOutDoc, page_box: &PageBox) -> Paginated {
 }
 
 fn table_headers_by_id(fragments: &[Fragment]) -> HashMap<usize, TableHeader> {
-    fragments
-        .iter()
-        .filter(|fragment| fragment.is_thead)
-        .filter_map(|fragment| {
-            let table_id = fragment.table_id?;
-            let (top, bottom) = row_span(&fragment.boxes);
-            Some((
-                table_id,
-                TableHeader {
-                    boxes: fragment.boxes.clone(),
-                    top,
-                    height: (bottom - top).max(0.0),
-                },
-            ))
-        })
-        .collect()
+    let mut headers = HashMap::new();
+    collect_table_headers(fragments, &mut headers);
+    headers
+}
+
+/// Collect every `<thead>` band, including those inside keep-together groups
+/// (whose rows need the band if the group falls back to its parts).
+fn collect_table_headers(fragments: &[Fragment], out: &mut HashMap<usize, TableHeader>) {
+    for fragment in fragments {
+        collect_table_headers(&fragment.members, out);
+        if !fragment.is_thead {
+            continue;
+        }
+        let Some(table_id) = fragment.table_id else {
+            continue;
+        };
+        let (top, bottom) = row_span(&fragment.boxes);
+        out.insert(
+            table_id,
+            TableHeader {
+                boxes: fragment.boxes.clone(),
+                top,
+                height: (bottom - top).max(0.0),
+            },
+        );
+    }
 }
 
 impl Fragment {
@@ -340,12 +391,26 @@ fn build_fragments(doc: &LaidOutDoc) -> Vec<Fragment> {
         let is_items_table = b.tag.as_deref() == Some("table")
             && subtree.iter().any(|x| x.tag.as_deref() == Some("thead"));
 
+        let splittable = is_items_table || should_flatten_transparent_wrapper(b, subtree);
+        let mut parts = Vec::new();
         if is_items_table {
-            // Emit a thead fragment + one fragment per tbody <tr>.
-            emit_table_fragments(subtree, &mut fragments);
-        } else if should_flatten_transparent_wrapper(b, subtree) {
-            emit_wrapper_child_fragments(subtree, b.margin_bottom, &mut fragments);
+            // A thead fragment + one fragment per tbody <tr> (or per
+            // `break-inside: avoid` tbody group).
+            emit_table_fragments(subtree, &mut parts);
+        } else if splittable {
+            emit_wrapper_child_fragments(subtree, b.margin_bottom, &mut parts);
+        }
+
+        if splittable && !b.break_inside_avoid {
+            if b.break_before_page {
+                if let Some(first) = parts.iter_mut().find(|part| !part.is_thead) {
+                    first.break_before = true;
+                }
+            }
+            fragments.append(&mut parts);
         } else {
+            // One block fragment. An items table or wrapper marked
+            // `break-inside: avoid` keeps its split as the fallback members.
             let (top, bottom) = span(subtree);
             fragments.push(Fragment {
                 boxes: subtree.to_vec(),
@@ -354,15 +419,53 @@ fn build_fragments(doc: &LaidOutDoc) -> Vec<Fragment> {
                 trailing_gap: b.margin_bottom,
                 table_id: None,
                 is_thead: false,
+                break_before: b.break_before_page,
+                members: parts,
             });
         }
 
         i = subtree_end;
     }
 
-    apply_inter_fragment_gaps(&mut fragments);
-    fragments.retain(fragment_has_renderables);
+    finalize_fragments(&mut fragments);
     fragments
+}
+
+/// Compute inter-fragment gaps and drop fragments with nothing to paint, at
+/// every level: a keep-together group's members get the same treatment so a
+/// group that falls back to its parts keeps the spacing it would have had
+/// without `avoid`, and its last member inherits the group's trailing gap. A
+/// dropped fragment's forced break (an empty `<div>` with
+/// `page-break-before: always`) moves to the next kept fragment.
+fn finalize_fragments(fragments: &mut Vec<Fragment>) {
+    apply_inter_fragment_gaps(fragments);
+    for fragment in fragments.iter_mut() {
+        if fragment.members.is_empty() {
+            continue;
+        }
+        finalize_fragments(&mut fragment.members);
+        let group_gap = fragment.trailing_gap;
+        if let Some(last) = fragment.members.last_mut() {
+            if last.trailing_gap == 0.0 {
+                last.trailing_gap = group_gap;
+            }
+        }
+    }
+    let mut carried_break = false;
+    fragments.retain_mut(|fragment| {
+        if !fragment_has_renderables(fragment) {
+            carried_break |= fragment.break_before;
+            return false;
+        }
+        fragment.break_before |= carried_break;
+        carried_break = false;
+        true
+    });
+}
+
+/// Whether a fragment, or any fragment nested in it, starts with a forced break.
+fn has_forced_break(fragment: &Fragment) -> bool {
+    fragment.break_before || fragment.members.iter().any(has_forced_break)
 }
 
 fn apply_inter_fragment_gaps(fragments: &mut [Fragment]) {
@@ -439,6 +542,7 @@ fn emit_wrapper_child_fragments(
     let root_depth = subtree[0].depth;
     let child_depth = root_depth + 1;
     let before = out.len();
+    let mut carried_break = false;
     let mut j = 1;
     while j < subtree.len() {
         if subtree[j].depth != child_depth {
@@ -452,8 +556,16 @@ fn emit_wrapper_child_fragments(
         let child_is_items_table = child_root.tag.as_deref() == Some("table")
             && child.iter().any(|x| x.tag.as_deref() == Some("thead"));
 
+        let break_before = child_root.break_before_page || carried_break;
+        carried_break = false;
         if child_is_items_table {
+            let start = out.len();
             emit_table_fragments(child, out);
+            if break_before {
+                if let Some(first) = out[start..].iter_mut().find(|part| !part.is_thead) {
+                    first.break_before = true;
+                }
+            }
         } else if fragment_has_renderables(&Fragment {
             boxes: child.to_vec(),
             top: 0.0,
@@ -461,6 +573,8 @@ fn emit_wrapper_child_fragments(
             trailing_gap: 0.0,
             table_id: None,
             is_thead: false,
+            break_before: false,
+            members: Vec::new(),
         }) {
             let (top, bottom) = span(child);
             out.push(Fragment {
@@ -470,7 +584,11 @@ fn emit_wrapper_child_fragments(
                 trailing_gap: child_root.margin_bottom,
                 table_id: None,
                 is_thead: false,
+                break_before,
+                members: Vec::new(),
             });
+        } else {
+            carried_break = break_before;
         }
         j = child_end;
     }
@@ -482,11 +600,18 @@ fn emit_wrapper_child_fragments(
     }
 }
 
-/// Break a table subtree into a thead fragment and per-row fragments.
+/// Break a table subtree into a thead fragment and per-row fragments. A
+/// `<tbody>` marked `break-inside: avoid` becomes one group fragment over its
+/// rows; a forced break on a `<tbody>` or `<tr>` lands on its first row.
 fn emit_table_fragments(subtree: &[LaidOutBox], out: &mut Vec<Fragment>) {
     let table_id = subtree.first().map(|b| b.node_id);
+    emit_table_parts(subtree, table_id, out);
+}
+
+fn emit_table_parts(subtree: &[LaidOutBox], table_id: Option<usize>, out: &mut Vec<Fragment>) {
     // Group boxes by their nearest enclosing <tr>/<thead>.
     let mut j = 0;
+    let mut pending_break_before = false;
     while j < subtree.len() {
         let b = &subtree[j];
         match b.tag.as_deref() {
@@ -499,14 +624,54 @@ fn emit_table_fragments(subtree: &[LaidOutBox], out: &mut Vec<Fragment>) {
                 // cells so per-row fragment heights reflect ONLY that row, not the
                 // whole table's accumulated bottom.
                 let (top, bottom) = row_span(group);
+                let is_thead = tag == "thead";
                 out.push(Fragment {
                     boxes: group.to_vec(),
                     top,
                     bottom,
                     trailing_gap: 0.0,
                     table_id,
-                    is_thead: tag == "thead",
+                    is_thead,
+                    break_before: !is_thead && (b.break_before_page || pending_break_before),
+                    members: Vec::new(),
                 });
+                if !is_thead {
+                    pending_break_before = false;
+                }
+                j = end;
+            }
+            Some("tbody") if b.break_inside_avoid => {
+                let end = subtree_end(subtree, j);
+                let mut rows = Vec::new();
+                emit_table_parts(&subtree[j + 1..end], table_id, &mut rows);
+                rows.retain(|row| !row.is_thead);
+                if let Some(first) = rows.first_mut() {
+                    first.break_before |= b.break_before_page || pending_break_before;
+                    pending_break_before = false;
+                }
+                if rows.len() > 1 {
+                    let top = rows.iter().map(|row| row.top).fold(f64::INFINITY, f64::min);
+                    let bottom = rows
+                        .iter()
+                        .map(|row| row.bottom)
+                        .fold(f64::NEG_INFINITY, f64::max);
+                    let break_before = rows[0].break_before;
+                    out.push(Fragment {
+                        boxes: rows
+                            .iter()
+                            .flat_map(|row| row.boxes.iter().cloned())
+                            .collect(),
+                        top,
+                        bottom,
+                        trailing_gap: 0.0,
+                        table_id,
+                        is_thead: false,
+                        break_before,
+                        members: rows,
+                    });
+                } else {
+                    out.append(&mut rows);
+                }
                 j = end;
             }
             _ => {
@@ -521,6 +686,9 @@ fn emit_table_fragments(subtree: &[LaidOutBox], out: &mut Vec<Fragment>) {
                     "dropped table-structure box {:?} carried text",
                     b.tag
                 );
+                if b.tag.as_deref() == Some("tbody") && b.break_before_page {
+                    pending_break_before = true;
+                }
                 j += 1;
             }
         }

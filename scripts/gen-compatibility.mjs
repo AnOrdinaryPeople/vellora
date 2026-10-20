@@ -168,6 +168,12 @@ const allowedRows = [
     note: "Page size and margins are honoured; running content is drawn in the `@top-center` and `@bottom-center` margin boxes, with `counter(page)` / `counter(pages)`. The other margin boxes are rejected (see below).",
   },
   {
+    feature:
+      "`break-inside: avoid` / `break-before: page` (and `page-break-inside` / `page-break-before`)",
+    status: "Partial",
+    note: "Read from top-level `<style>` rules (any selector Stylo parses) and inline `style`; rules inside `@media`/`@supports` are ignored. `break-inside: avoid` keeps together a top-level block, a transparent wrapper (`div`/`section`/`article`/`main`), an items table, or an items-table `<tbody>`; a group taller than an empty page falls back to its rows. `break-before: page` starts a top-level block, a wrapper child, a `<tbody>` or a `<tr>` on a new page. `break-after` and `orphans`/`widows` are not implemented.",
+  },
+  {
     feature: "Fonts: text shaping + subset embedding",
     status: "Supported",
     note: "Text is shaped and the resolved font is subset and embedded into the PDF.",
