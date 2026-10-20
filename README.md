@@ -19,6 +19,10 @@ npm install vellora
 Supported prebuilds today: macOS arm64/x64 and Linux glibc x64/arm64. musl/Alpine and Windows
 prebuilds are not published yet.
 
+vellora ships as ESM. CommonJS projects (for example NestJS with `"module": "commonjs"`) can
+`require("vellora")` on Node 20.19+ or 22.12+, where Node loads ES modules through `require()`. On
+older Node versions, use `await import("vellora")` instead.
+
 ## Quick Start
 
 ```ts
