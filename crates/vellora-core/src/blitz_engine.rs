@@ -51,6 +51,12 @@ pub struct LaidOutBox {
     /// Table-cell span in rows. Non-cell boxes use `1`. The fixed-table column
     /// pass needs this to skip columns a rowspan still occupies in later rows.
     pub rowspan: usize,
+    /// `break-inside: avoid` (or the legacy `page-break-inside: avoid`) applies
+    /// to this element, from a `<style>` rule or its inline `style`.
+    pub break_inside_avoid: bool,
+    /// A forced page break (`break-before: page`, `page-break-before: always`)
+    /// applies before this element.
+    pub break_before_page: bool,
     /// Depth in the tree (0 = root). Useful for debugging/asserts.
     pub depth: usize,
     /// If this node is an inline root, the shaped text it owns.
@@ -325,6 +331,7 @@ fn walk_for_denied(
 /// entirely within this function (lifetime contract).
 pub fn lay_out(html: &str) -> LaidOutDoc {
     let normalized = crate::html_normalize::normalize_table_cell_mixed_flow(html);
+    let breaks = crate::break_css::parse_break_rules(&normalized);
     let doc = build_document(&normalized, &[]);
     // Standalone/test helper: lay out against the full A4 width with no caller
     // images (an unresolved `<img>` is recorded on the doc but not enforced here).
@@ -335,6 +342,7 @@ pub fn lay_out(html: &str) -> LaidOutDoc {
         A4_HEIGHT_PX,
         &std::collections::HashMap::new(),
         None,
+        &breaks,
     )
 }
 
@@ -355,6 +363,7 @@ pub fn validate_then_lay_out(
     fonts: &[Vec<u8>],
 ) -> Result<LaidOutDoc, DeniedElement> {
     let normalized = crate::html_normalize::normalize_table_cell_mixed_flow(html);
+    let breaks = crate::break_css::parse_break_rules(&normalized);
     let doc = build_document(&normalized, fonts);
     // Validate and lay out the same Blitz parse. The table-cell normalizer may
     // parse/serialize HTML before this point, but there is still one Blitz tree
@@ -368,6 +377,7 @@ pub fn validate_then_lay_out(
         content_height_px,
         images,
         base_url,
+        &breaks,
     ))
 }
 
@@ -383,6 +393,7 @@ fn resolve_and_walk(
     content_height_px: f64,
     images: &std::collections::HashMap<String, Vec<u8>>,
     base_url: Option<&str>,
+    breaks: &crate::break_css::BreakRules,
 ) -> LaidOutDoc {
     let viewport = Viewport::new(
         content_width_px as u32,
@@ -394,6 +405,10 @@ fn resolve_and_walk(
     doc.as_mut().resolve(0.0);
 
     let base: &BaseDocument = doc.as_ref();
+    let break_targets = BreakTargets {
+        avoid_inside: matched_nodes(base, &breaks.avoid_inside),
+        page_before: matched_nodes(base, &breaks.page_before),
+    };
     let mut boxes = Vec::new();
     // Resolves each <img> source to bytes during the walk and records the first
     // renderable-but-unresolved <img> in document order.
@@ -421,6 +436,7 @@ fn resolve_and_walk(
             out: &mut boxes,
             face_cache: &mut face_cache,
             img: &mut img_resolve,
+            breaks: &break_targets,
         };
         walk(base, root_id, 0.0, 0.0, 0, &mut sink);
     }
@@ -465,6 +481,24 @@ struct WalkSink<'a, 'img> {
     out: &'a mut Vec<LaidOutBox>,
     face_cache: &'a mut std::collections::HashMap<u64, std::sync::Arc<Vec<u8>>>,
     img: &'a mut ImageResolve<'img>,
+    breaks: &'a BreakTargets,
+}
+
+/// Node ids matched by the stylesheet's fragmentation rules
+/// (see [`crate::break_css`]).
+struct BreakTargets {
+    avoid_inside: std::collections::HashSet<usize>,
+    page_before: std::collections::HashSet<usize>,
+}
+
+/// Resolve each selector list with Stylo's selector matching. A selector Stylo
+/// cannot parse matches nothing, exactly as the browser drops that rule.
+fn matched_nodes(base: &BaseDocument, selectors: &[String]) -> std::collections::HashSet<usize> {
+    selectors
+        .iter()
+        .filter_map(|selector| base.query_selector_all(selector).ok())
+        .flatten()
+        .collect()
 }
 
 /// Recursively read the laid-out tree, accumulating parent-relative
@@ -516,6 +550,11 @@ fn walk(
         sink.img,
     );
 
+    let inline_breaks = node
+        .attr(blitz_dom::local_name!("style"))
+        .map(crate::break_css::declares)
+        .unwrap_or_default();
+
     sink.out.push(LaidOutBox {
         node_id,
         tag,
@@ -531,6 +570,9 @@ fn walk(
         text_align_right: text_align_right(node),
         colspan: colspan(node),
         rowspan: rowspan(node),
+        break_inside_avoid: inline_breaks.avoid_inside
+            || sink.breaks.avoid_inside.contains(&node_id),
+        break_before_page: inline_breaks.page_before || sink.breaks.page_before.contains(&node_id),
         depth,
         text_runs,
         visual_rects,

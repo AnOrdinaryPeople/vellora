@@ -65,6 +65,7 @@ Supported or documented today:
 
 - block and inline text, headings, lists, and tables, including repeated `<thead>` across pages
 - `@page` margins, page counters, running headers/footers
+- `break-inside: avoid` and `break-before: page` on blocks, wrapper sections and table `<tbody>` groups
 - PNG, JPEG, GIF, and WebP images via data URLs or the `images` option
 - custom TTF/OTF font bytes via the `fonts` option
 - PDF/A-2b archival output

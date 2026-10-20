@@ -32,6 +32,7 @@
 //!   package reconstructs from this diagnostic — same name by intent, not type.
 
 pub mod blitz_engine;
+pub mod break_css;
 pub mod css_scan;
 mod fonts;
 mod html_normalize;
