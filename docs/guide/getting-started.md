@@ -5,7 +5,10 @@ This tutorial takes you from nothing to a rendered PDF. The happy path installs 
 ## Requirements
 
 - Node.js 22 (the repo pins `22` via `.nvmrc`; vellora supports Node `>=20`).
-- An ESM project (`"type": "module"` in your `package.json`), or use a `.mjs` file.
+- An ESM project (`"type": "module"` in your `package.json`) or a `.mjs` file, or a CommonJS
+  project on Node 20.19+ / 22.12+, where `require("vellora")` loads the ES module. In CommonJS, use
+  named imports, and when bundling mark `vellora` and `@vellora/*` as externals. See the
+  [README](https://github.com/diomalta/vellora#install) for TypeScript `moduleResolution` notes.
 
 ## Install
 

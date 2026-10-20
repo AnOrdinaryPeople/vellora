@@ -21,7 +21,15 @@ prebuilds are not published yet.
 
 vellora ships as ESM. CommonJS projects (for example NestJS with `"module": "commonjs"`) can
 `require("vellora")` on Node 20.19+ or 22.12+, where Node loads ES modules through `require()`. On
-older Node versions, use `await import("vellora")` instead.
+older Node versions, use `await import("vellora")` instead. In CommonJS:
+
+- Use named imports (`import { renderPdf } from "vellora"`). The package has no default export.
+- With TypeScript `moduleResolution: "node16"`, a CommonJS file cannot import vellora (TS1479).
+  Use `"nodenext"` or `"node20"` (TypeScript 5.8+), or the classic `"node"` resolution.
+- When bundling to CommonJS (esbuild, webpack), mark `vellora` and `@vellora/*` as externals. The
+  native loader needs `import.meta.url`, which a CommonJS bundle does not provide.
+- Node 22.12 prints a harmless `ExperimentalWarning` on `require()` of an ES module; later 22.x
+  releases do not.
 
 ## Quick Start
 
